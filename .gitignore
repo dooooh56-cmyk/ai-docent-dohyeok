@@ -1,0 +1,10 @@
+.env
+.env.*
+.venv*/
+.idea/
+.codex/
+.DS_Store
+__pycache__/
+*.py[cod]
+data/images/
+embeddings/
