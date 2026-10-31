@@ -119,6 +119,7 @@ artbridge/
 ├── embeddings/                       # 모델별 벡터와 artwork_id 순서표
 ├── src/
 │   ├── catalog.py                    # 카탈로그 검증과 권리 게이트
+│   ├── fetch_images.py               # 승인 이미지 재다운로드·해시 확인
 │   ├── embed.py                      # 이미지 임베딩 생성·저장
 │   ├── search.py                     # 해외 작품 Top-k 검색
 │   ├── compare_metadata.py           # 메타데이터 병렬 비교
@@ -154,7 +155,9 @@ artbridge/
 | --- | --- | --- |
 | 카탈로그·권리 검증 | `src/catalog.py` — `load_catalog(path)` | `metadata.csv`와 같은 디렉터리의 `license_log.csv`를 읽어 작품별 권리 기록을 연결한다. 파일 누락·필수 열 누락을 명확한 오류로 알린다. |
 | 카탈로그·권리 검증 | `src/catalog.py` — `validate_catalog(rows)` | 필수 `artwork_id`, `region`, 작품 페이지 URL, 이미지 경로를 검사하고 중복 ID·잘못된 권역·존재하지 않는 이미지 경로를 보고한다. 누락된 학술 정보는 임의로 채우지 않고 결측으로 둔다. |
-| 카탈로그·권리 검증 | `src/catalog.py` — `usable_image_rows(rows, purpose)` | `rights_status` 및 라이선스 조건을 확인해 해당 용도로 사용할 수 있는 이미지 레코드만 반환한다. 불명확·금지·허가 미확인 이미지는 임베딩 대상에서 제외한다. |
+| 카탈로그·권리 검증 | `src/catalog.py` — `approved_rows(rows, purpose)` | `rights_status`, 승인자, 용도, 필수 권리 필드를 확인해 해당 용도로 승인된 레코드만 반환한다. 파일 존재 여부는 보지 않는다. |
+| 카탈로그·권리 검증 | `src/catalog.py` — `usable_image_rows(rows, purpose)` | `approved_rows` 결과 중 로컬 이미지 파일이 있고 기록된 `image_sha256`과 일치하는 레코드만 반환한다. 불명확·금지·허가 미확인 이미지는 임베딩 대상에서 제외한다. |
+| 이미지 복원 | `src/fetch_images.py` — `fetch_catalog_images(rows, purpose)` | 승인된 레코드만 `image_source_url`에서 다시 받는다. 내려받은 파일의 해시가 기록과 다르면 저장하지 않고 `hash_mismatch`로 보고하며, 실패 건을 숨기지 않는다. |
 | 이미지 임베딩 | `src/embed.py` — `load_image(path)` | 이미지 파일을 열고 손상 파일·지원하지 않는 형식을 오류로 분리한다. 색상 모드 변환과 모델 입력 전처리는 선택된 모델의 공식 processor에 맡긴다. |
 | 이미지 임베딩 | `src/embed.py` — `embed_image(image, model, processor)` | 단일 이미지에서 모델 임베딩 벡터를 계산한다. 입력은 이미지와 고정된 모델/processor, 출력은 1차원 벡터다. |
 | 이미지 임베딩 | `src/embed.py` — `embed_catalog(rows, model_id)` | 권리 사용이 허용된 카탈로그 이미지 전체를 같은 설정으로 벡터화하고, 각 벡터의 행이 어떤 `artwork_id`인지 함께 보존한다. 처리 실패 레코드는 이유와 함께 남긴다. |
