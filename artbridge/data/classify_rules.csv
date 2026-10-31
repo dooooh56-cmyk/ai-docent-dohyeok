@@ -1,0 +1,5 @@
+set_name,source,query,description
+korea_painting,met,"Culture.str.contains('Korea') and Classification.str.contains('Painting')",Met 기관 표기상 한국 문화권 회화
+foreign_painting,met,"Classification.str.contains('Painting') and not Culture.str.contains('Korea')",한국 외 회화 (모든 부서)
+japan_print,met,"Culture.str.contains('Japan') and Classification.str.contains('Prints')",일본 판화 (우키요에 포함)
+buddhist_sculpture,met,"Classification.str.contains('Sculpture') and (Title.str.contains('Buddha|Bodhisattva|Buddhist', case=False) or `Object Name`.str.contains('Buddha|Bodhisattva|Buddhist', case=False) or Tags.str.contains('Buddha|Bodhisattva|Buddhist', case=False))",기존 ArtBridge 대상인 불교 조각

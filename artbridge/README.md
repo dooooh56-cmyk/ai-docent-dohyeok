@@ -23,6 +23,22 @@ uv run streamlit run app.py --server.address 127.0.0.1 --browser.gatherUsageStat
 
 현재 카탈로그는 한국 5점, 중국 21점, 일본 10점, 인도/간다라 9점으로 구성됩니다. 원래 수집한 120개 후보 중 포함하지 않은 항목의 사유는 `data/import_report.csv`에 기록되어 있습니다. 권역별 균형과 사람 평가가 아직 충분하지 않습니다.
 
+## 대량 수집 (메타데이터 전체 → 쿼리 분류 → 공개 이미지)
+
+Met은 Open Access 전체 메타데이터 CSV(약 50만 건, 340MB, `data/raw/`에 저장하며 커밋하지 않음)를 받은 뒤 `data/classify_rules.csv`의 쿼리로 분류합니다. 분류 결과는 `data/classified/met_classified.csv`입니다. 이미지는 분류된 작품 중 Met 객체 API가 현재 `isPublicDomain=true`로 표기한 것만 받고, 사용자 일괄 승인 규칙으로 `data/collection/`의 카탈로그·권리 기록에 추가합니다. 중단 후 다시 실행하면 이미 받은 작품은 건너뜁니다.
+
+```bash
+curl -L -o data/raw/MetObjects.csv https://media.githubusercontent.com/media/metmuseum/openaccess/master/MetObjects.csv
+```
+
+```bash
+uv run python -m src.classify data/raw/MetObjects.csv
+```
+
+```bash
+uv run python -m src.collect.fetch_met_images data/classified/met_classified.csv --sets korea_painting foreign_painting japan_print
+```
+
 ## 후보 수집 (API 키)
 
 `src/collect/`의 후보 수집기 중 e뮤지엄(`EMUSEUM_API_KEY`, data.go.kr 발급)과 Smithsonian(`SMITHSONIAN_API_KEY`, api.data.gov 발급)은 API 키가 필요합니다. Met과 Japan Search(ColBase)는 키가 필요하지 않습니다. 키는 `artbridge/.env`에 두며 저장소에 커밋하지 않습니다. 이미지 재다운로드에는 키가 필요하지 않습니다.
