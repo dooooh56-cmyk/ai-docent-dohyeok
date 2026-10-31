@@ -13,6 +13,9 @@ MET_COLUMNS = ["Object ID", "Is Public Domain", "Department", "Object Name", "Ti
 def load_raw(source, path, codes_path=None):
     if source == "met":
         return pd.read_csv(path, dtype=str, usecols=MET_COLUMNS, encoding="utf-8-sig")
+    for required, step in ((path, "uv run python -m src.collect.collect_emuseum"), (codes_path, "uv run python -m src.collect.emuseum_codes")):
+        if not Path(required).is_file():
+            raise SystemExit(f"{required} not found; run first: {step}")
     raw = pd.read_json(path, lines=True, dtype=str).fillna("")
     codes = pd.read_csv(codes_path, dtype=str, encoding="utf-8-sig").fillna("")
     for field, column in (("nationalityCode", "nationality_label"), ("purposeCode", "purpose_label"), ("materialCode", "material_label")):
