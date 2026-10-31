@@ -24,6 +24,15 @@ def download_bytes(url, session, timeout=30):
     return bytes(content)
 
 
+def source_url(url):
+    """eMuseum URLs are recorded with the API key redacted; put the local key back only for the request."""
+    if "serviceKey=%5Bredacted%5D" not in url:
+        return url
+    from src.collect.collect_emuseum import api_key
+    from src.collect.fetch_emuseum_images import with_key
+    return with_key(url, api_key())
+
+
 def fetch_catalog_images(rows, purpose="local_research", delay=0.5, session=None):
     session = session or requests.Session()
     session.headers.setdefault("User-Agent", USER_AGENT)
@@ -34,9 +43,9 @@ def fetch_catalog_images(rows, purpose="local_research", delay=0.5, session=None
             report.append({"artwork_id": row["artwork_id"], "status": "present"})
             continue
         try:
-            content = download_bytes(row["image_source_url"], session)
+            content = download_bytes(source_url(row["image_source_url"]), session)
         except (requests.RequestException, ValueError) as error:
-            report.append({"artwork_id": row["artwork_id"], "status": "failed", "error": str(error)})
+            report.append({"artwork_id": row["artwork_id"], "status": "failed", "error": type(error).__name__ if "%5Bredacted%5D" in row["image_source_url"] else str(error)})
             continue
         finally:
             time.sleep(delay)

@@ -1,23 +1,21 @@
-"""Collect Korean Buddhist-art candidates from the eMuseum Open API."""
+"""Collect the full eMuseum Open API list metadata, page by page, into data/raw/ (resumable JSON Lines)."""
 
-import csv
+import argparse
 import json
 import os
+import time
 import xml.etree.ElementTree as ET
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
-from datetime import date
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import requests
 
 API_URL = "https://apis.data.go.kr/1371027/openapi/list"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-OUTPUT_PATH = PROJECT_ROOT / "data" / "emuseum_candidates.csv"
-QUERY = "불상"
-LIMIT = 30
+OUTPUT_PATH = PROJECT_ROOT / "data" / "raw" / "emuseum_list.jsonl"
 
 
-def _load_env_file() -> None:
+def load_env_file() -> None:
     env_path = PROJECT_ROOT / ".env"
     if not env_path.exists():
         return
@@ -32,90 +30,83 @@ def _load_env_file() -> None:
             os.environ.setdefault(key, value)
 
 
-def _items(payload: dict | str) -> list[dict]:
-    if isinstance(payload, str):
-        root = ET.fromstring(payload)
-        return [{item.attrib.get("key", ""): item.attrib.get("value", "")
-                 for item in record if item.attrib.get("key")}
-                for record in root.findall("./list/data")]
-    items = payload.get("response", {}).get("body", {}).get("items", {}).get("item", [])
-    return items if isinstance(items, list) else [items] if items else []
+def api_key() -> str:
+    load_env_file()
+    key = os.getenv("EMUSEUM_API_KEY")
+    if not key:
+        raise SystemExit("Set EMUSEUM_API_KEY in artbridge/.env after registering for the eMuseum API at data.go.kr.")
+    return key
 
 
-def _safe_url(value: str) -> str:
+def safe_url(value: str) -> str:
     parts = urlsplit(value)
     query = [(key, "[redacted]" if key.lower() == "servicekey" else val)
              for key, val in parse_qsl(parts.query, keep_blank_values=True)]
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 
-def collect_candidates(api_key: str) -> list[dict]:
-    response = requests.get(
-        API_URL,
-        params={"serviceKey": api_key, "name": QUERY, "numOfRows": LIMIT, "pageNo": 1},
-        headers={"Accept": "application/xml"},
-        timeout=30,
-    )
-    response.raise_for_status()
-    try:
-        payload = response.json()
-    except requests.exceptions.JSONDecodeError:
-        payload = response.text
-    items = _items(payload)
-    accessed_at = date.today().isoformat()
-    rows = [
-        {
-            "artwork_id": f"EMUSEUM_{item.get('id', '')}",
-            "title_original": item.get("nameKr", ""),
-            "region": "",
-            "period_original": item.get("period", ""),
-            "material_original": item.get("material", ""),
-            "museum": item.get("museumName1", ""),
-            "accession_number": item.get("relicNo", ""),
-            "image_url": _safe_url(item.get("imgUri", "")),
-            "source_url": "",
-            "metadata_source": "National Museum of Korea eMuseum Open API",
-            "metadata_accessed_at": accessed_at,
-            "image_license": "",
-            "license_url": "https://www.emuseum.go.kr/copyright",
-            "rights_status": "unverified",
-            "rights_checked_at": "",
-            "api_rights_accessed_at": "",
-            "api_record_id": item.get("id", ""),
-            "source_record_json": json.dumps(
-                {key: (_safe_url(value) if "uri" in key.lower() and isinstance(value, str) else value)
-                 for key, value in item.items()},
-                ensure_ascii=False,
-            ),
-        }
-        for item in items[:LIMIT]
-        if item.get("id") and item.get("nameKr")
-    ]
-    return rows
+def parse_page(text: str) -> tuple[int, list[dict]]:
+    root = ET.fromstring(text)
+    code = root.findtext("resultCode") or ""
+    if code not in ("", "0", "00", "0000"):
+        raise ValueError(f"eMuseum API error {code}: {root.findtext('resultMsg')}")
+    items = [{item.attrib.get("key", ""): item.attrib.get("value", "") for item in record if item.attrib.get("key")}
+             for record in root.findall("./list/data")]
+    return int(root.findtext("totalCount") or 0), items
 
 
-def main() -> None:
-    _load_env_file()
-    api_key = os.getenv("EMUSEUM_API_KEY")
-    if not api_key:
-        raise SystemExit("Set EMUSEUM_API_KEY after registering for the eMuseum API at data.go.kr.")
+def last_page(path: Path) -> int:
+    if not path.exists():
+        return 0
+    with path.open(encoding="utf-8") as source:
+        lines = [line for line in source if line.strip()]
+    return json.loads(lines[-1])["_page"] if lines else 0
 
-    try:
-        rows = collect_candidates(api_key)
-    except requests.RequestException as error:
-        status = error.response.status_code if error.response is not None else "network error"
-        kind = type(error).__name__
-        raise SystemExit(f"eMuseum API request failed ({status}, {kind}); details suppressed.") from None
-    if not rows:
-        print("No eMuseum candidates found.")
-        return
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with OUTPUT_PATH.open("w", newline="", encoding="utf-8-sig") as output:
-        writer = csv.DictWriter(output, fieldnames=rows[0].keys())
-        writer.writeheader()
-        writer.writerows(rows)
-    print(f"Collected {len(rows)} candidates: {OUTPUT_PATH}")
+
+def collect_all(key: str, start_page: int = 1, page_size: int = 100, delay: float = 0.2, filters: dict | None = None):
+    """Yield each page's records as a list; stops at totalCount or the first short page."""
+    session = requests.Session()
+    page, seen = start_page, (start_page - 1) * page_size
+    while True:
+        params = {"serviceKey": key, "numOfRows": page_size, "pageNo": page, **(filters or {})}
+        response = session.get(API_URL, params=params, headers={"Accept": "application/xml"}, timeout=60)
+        response.raise_for_status()
+        total, items = parse_page(response.text)
+        yield [{"_page": page, **{name: safe_url(value) if "uri" in name.lower() else value for name, value in item.items()}}
+               for item in items]
+        seen += len(items)
+        print(f"page {page}: {seen}/{total}", flush=True)
+        if not items or len(items) < page_size or seen >= total:
+            return
+        page += 1
+        time.sleep(delay)
+
+
+def append_jsonl(pages, path: Path) -> int:
+    """Append one whole page at a time so an interrupted run resumes at a page boundary."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    count = 0
+    for records in pages:
+        with path.open("a", encoding="utf-8") as output:
+            output.write("".join(json.dumps(record, ensure_ascii=False) + "\n" for record in records))
+        count += len(records)
+    return count
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Collect all eMuseum list records (API key from artbridge/.env)")
+    parser.add_argument("--output", default=str(OUTPUT_PATH))
+    parser.add_argument("--page-size", type=int, default=100)
+    parser.add_argument("--delay", type=float, default=0.2)
+    parser.add_argument("--name", help="optional name filter; omit to collect everything")
+    args = parser.parse_args()
+    output = Path(args.output)
+    start = last_page(output) + 1
+    if start > 1:
+        print(f"Resuming after page {start - 1} (records of that page are already saved)")
+    try:
+        count = append_jsonl(collect_all(api_key(), start, args.page_size, args.delay, {"name": args.name} if args.name else None), output)
+    except requests.RequestException as error:
+        status = error.response.status_code if error.response is not None else "network error"
+        raise SystemExit(f"eMuseum API request failed ({status}, {type(error).__name__}); details suppressed.") from None
+    print(f"Added {count} records: {output}")

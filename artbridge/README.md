@@ -39,6 +39,26 @@ uv run python -m src.classify data/raw/MetObjects.csv
 uv run python -m src.collect.fetch_met_images data/classified/met_classified.csv --sets korea_painting foreign_painting japan_print
 ```
 
+### e뮤지엄 (국립중앙박물관 등, API 키 필요)
+
+같은 순서로 진행합니다. 목록 API는 국적·분류·재질을 코드로만 주므로, 코드마다 작품 페이지 2개를 읽어 표시된 이름(예: `PS06001018` → `한국 - 조선`)을 붙인 뒤 분류합니다. 이미지는 작품 페이지가 공공누리 제1유형으로 표기한 것만 받습니다. 목록 수집은 중단돼도 다시 실행하면 이어서 받습니다. API 키는 저장 파일과 오류 메시지에 남기지 않습니다.
+
+```bash
+uv run python -m src.collect.collect_emuseum
+```
+
+```bash
+uv run python -m src.collect.emuseum_codes
+```
+
+```bash
+uv run python -m src.classify data/raw/emuseum_list.jsonl --source emuseum
+```
+
+```bash
+uv run python -m src.collect.fetch_emuseum_images --sets joseon_painting foreign_painting
+```
+
 ## 후보 수집 (API 키)
 
 `src/collect/`의 후보 수집기 중 e뮤지엄(`EMUSEUM_API_KEY`, data.go.kr 발급)과 Smithsonian(`SMITHSONIAN_API_KEY`, api.data.gov 발급)은 API 키가 필요합니다. Met과 Japan Search(ColBase)는 키가 필요하지 않습니다. 키는 `artbridge/.env`에 두며 저장소에 커밋하지 않습니다. 이미지 재다운로드에는 키가 필요하지 않습니다.
