@@ -12,38 +12,43 @@ from pathlib import Path
 import pandas as pd
 
 from src.classify import classify, load_raw, load_rules
-from src.collect.collect_emuseum import api_key, collect_list as collect_records
+from src.collect.collect_emuseum import api_key, collect_list as collect_records, parse_filters, partition_name
 from src.collect.emuseum_codes import label_codes
 from src.collect.fetch_emuseum_images import fetch_set
 from src.collect.pipeline import run_pipeline, step
 
 RAW = Path("data/raw")
 LIST_PATH = RAW / "emuseum_list.jsonl"
-DONE_PATH = RAW / "emuseum_list.done"
 CODES_PATH = RAW / "emuseum_codes.csv"
 CLASSIFIED_PATH = Path("data/classified/emuseum_classified.csv")
 
 
-def collect_list(key, refresh, page_size):
+def collect_list(key, refresh, page_size, partitions):
+    """Collect the list, either in one query or as several filtered partitions that all append to LIST_PATH."""
     if refresh:
-        for stale in (DONE_PATH, LIST_PATH, LIST_PATH.with_suffix(".progress"), LIST_PATH.with_name(LIST_PATH.stem + "_gaps.csv")):
-            stale.unlink(missing_ok=True)
-    if DONE_PATH.exists():
-        print(f"skip: list already complete ({DONE_PATH.read_text(encoding='utf-8').strip()}); use --refresh to collect again")
-        return
-    added, _ = collect_records(key, LIST_PATH, page_size)
-    total = sum(1 for line in LIST_PATH.open(encoding="utf-8") if line.strip())
-    DONE_PATH.write_text(json.dumps({"finished_at": datetime.now().isoformat(timespec="seconds"), "records": total}) + "\n", encoding="utf-8")
-    gaps = LIST_PATH.with_name(LIST_PATH.stem + "_gaps.csv")
-    skipped = sum(1 for _ in gaps.open(encoding="utf-8")) - 1 if gaps.exists() else 0
-    print(f"list complete: {total} records ({added} added this run; {skipped} offsets skipped, see {gaps.name})" if skipped
-          else f"list complete: {total} records ({added} added this run)")
+        for stale in RAW.glob(LIST_PATH.stem + "*"):
+            stale.unlink()
+    for filters in partitions or [None]:
+        name = partition_name(filters)
+        done = LIST_PATH.with_name(LIST_PATH.stem + (f".{name}" if name else "") + ".done")
+        label = f"partition {name}" if name else "list"
+        if done.exists():
+            print(f"skip: {label} already complete ({done.read_text(encoding='utf-8').strip()}); use --refresh to collect again")
+            continue
+        print(f"collecting {label}", flush=True)
+        added, total = collect_records(key, LIST_PATH, page_size, filters=filters)
+        done.write_text(json.dumps({"finished_at": datetime.now().isoformat(timespec="seconds"), "total": total, "added": added}) + "\n",
+                        encoding="utf-8")
+        print(f"{label} complete: totalCount {total} ({added} new records this run)")
+    records = sum(1 for line in LIST_PATH.open(encoding="utf-8") if line.strip())
+    gaps = sum(sum(1 for _ in path.open(encoding="utf-8")) - 1 for path in RAW.glob(LIST_PATH.stem + "*_gaps.csv"))
+    print(f"list file: {records} records" + (f"; {gaps} offsets skipped (see {LIST_PATH.stem}*_gaps.csv)" if gaps else ""))
 
 
 def run(args):
     key = api_key()
     step("1/4 list")
-    collect_list(key, args.refresh, args.page_size)
+    collect_list(key, args.refresh, args.page_size, [parse_filters(spec.split(",")) for spec in args.partition])
     step("2/4 code labels")
     raw = pd.read_json(LIST_PATH, lines=True, dtype=str).fillna("")
     print(label_codes(raw, CODES_PATH))
@@ -66,6 +71,8 @@ if __name__ == "__main__":
     parser.add_argument("--delay", type=float, default=0.3)
     parser.add_argument("--page-size", type=int, default=100,
                         help="list rows per request; larger means fewer requests. Stops with a message if the API caps it")
+    parser.add_argument("--partition", action="append", default=[], metavar="KEY=VALUE[,KEY=VALUE]",
+                        help="collect the list as filtered partitions (repeat per partition) when one query cannot be paged to the end")
     parser.add_argument("--refresh", action="store_true", help="collect the list again from page 1 (for periodic updates)")
     parser.add_argument("--recheck-skipped", action="store_true", help="re-read object pages previously skipped for rights")
     run_pipeline("emuseum", run, parser.parse_args())

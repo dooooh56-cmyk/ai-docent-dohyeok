@@ -109,6 +109,14 @@ def fetch_page(session, key, page, page_size, filters, retries=6):
             time.sleep(wait)
 
 
+# This many single rows refused in a row means the query cannot be paged further, not that a few records are bad.
+MAX_CONSECUTIVE_GAPS = 20
+
+
+def partition_name(filters: dict | None) -> str:
+    return "_".join(f"{key}-{value}" for key, value in sorted((filters or {}).items()))
+
+
 def smaller_size(size):
     """Next block size when a block keeps failing: the largest of 100, 10, 1 that divides it."""
     return next(candidate for candidate in (100, 10, 1) if candidate < size and size % candidate == 0)
@@ -118,11 +126,14 @@ class ListWriter:
     """Appends records (dropping ids already saved), logs offsets that cannot be fetched even one row at a time,
     and keeps the next offset in a progress file so reruns resume there."""
 
-    def __init__(self, path: Path):
-        self.path, self.progress, self.gaps = path, path.with_suffix(".progress"), path.with_name(path.stem + "_gaps.csv")
+    def __init__(self, path: Path, partition: str = ""):
+        stem = path.stem + (f".{partition}" if partition else "")
+        self.path, self.progress, self.gaps = path, path.with_name(stem + ".progress"), path.with_name(stem + "_gaps.csv")
+        self.consecutive_gaps = 0
         ids = saved_ids(path)
         self.seen = set(ids)
-        self.next_offset = int(self.progress.read_text()) if self.progress.exists() else len(ids)
+        # without a progress file, an unfiltered run resumes at the saved count (lists written before progress files existed)
+        self.next_offset = int(self.progress.read_text()) if self.progress.exists() else 0 if partition else len(ids)
         self.added = 0
 
     def write(self, records, next_offset):
@@ -134,6 +145,8 @@ class ListWriter:
         self.progress.write_text(str(next_offset))
         self.next_offset = next_offset
         self.added += len(new)
+        if records:
+            self.consecutive_gaps = 0
 
     def gap(self, offset, reason):
         new_file = not self.gaps.exists()
@@ -155,6 +168,11 @@ def collect_block(session, key, writer, offset, size, filters):
             print(f"offset {offset}: skipped after repeated failure; logged in {writer.gaps.name}", flush=True)
             writer.gap(offset, str(error))
             writer.write([], offset + 1)
+            writer.consecutive_gaps += 1
+            if writer.consecutive_gaps >= MAX_CONSECUTIVE_GAPS:
+                raise FatalApiError(
+                    f"offset {offset}: the last {MAX_CONSECUTIVE_GAPS} rows were all refused one by one, so the API most likely "
+                    "stops paging this deep into one query. Collect in smaller partitions instead (see probe_emuseum)")
             return 0
         sub = smaller_size(size)
         print(f"offset {offset}: splitting the block of {size} into blocks of {sub}", flush=True)
@@ -174,7 +192,7 @@ def collect_block(session, key, writer, offset, size, filters):
 
 def collect_list(key: str, path: Path, page_size: int = 100, delay: float = 0.2, filters: dict | None = None):
     """Collect every list record into path; returns (records added this run, totalCount)."""
-    writer = ListWriter(path)
+    writer = ListWriter(path, partition_name(filters))
     offset = writer.next_offset // page_size * page_size
     if writer.next_offset:
         print(f"resuming at offset {writer.next_offset} ({len(writer.seen)} records saved), block size {page_size}", flush=True)
@@ -191,16 +209,23 @@ def collect_list(key: str, path: Path, page_size: int = 100, delay: float = 0.2,
     return writer.added, total
 
 
+def parse_filters(pairs) -> dict:
+    if any("=" not in pair for pair in pairs):
+        raise SystemExit("filters must look like KEY=VALUE")
+    return dict(pair.split("=", 1) for pair in pairs)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Collect all eMuseum list records (API key from artbridge/.env)")
     parser.add_argument("--output", default=str(OUTPUT_PATH))
     parser.add_argument("--page-size", type=int, default=100)
     parser.add_argument("--delay", type=float, default=0.2)
-    parser.add_argument("--name", help="optional name filter; omit to collect everything")
+    parser.add_argument("--filter", action="append", default=[], metavar="KEY=VALUE",
+                        help="API filter for one partition, e.g. purposeCode=PS09...; repeat to combine")
     args = parser.parse_args()
     output = Path(args.output)
     try:
-        added, total = collect_list(api_key(), output, args.page_size, args.delay, {"name": args.name} if args.name else None)
+        added, total = collect_list(api_key(), output, args.page_size, args.delay, parse_filters(args.filter))
     except ApiError as error:
         raise SystemExit(f"stopped: {error}; rerun the same command to resume") from None
     print(f"Added {added} records (total {total}): {output}")
