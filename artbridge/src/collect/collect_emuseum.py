@@ -3,10 +3,10 @@
 import argparse
 import json
 import os
+import re
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import requests
 
@@ -39,10 +39,8 @@ def api_key() -> str:
 
 
 def safe_url(value: str) -> str:
-    parts = urlsplit(value)
-    query = [(key, "[redacted]" if key.lower() == "servicekey" else val)
-             for key, val in parse_qsl(parts.query, keep_blank_values=True)]
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+    """Redact only the serviceKey value; the rest of the URL (e.g. imageId) is kept byte for byte."""
+    return re.sub(r"(?i)(servicekey=)[^&#]*", r"\g<1>%5Bredacted%5D", value)
 
 
 def parse_page(text: str) -> tuple[int, list[dict]]:

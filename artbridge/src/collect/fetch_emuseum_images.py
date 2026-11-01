@@ -10,7 +10,7 @@ import re
 import time
 from datetime import date
 from pathlib import Path
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import quote
 
 import pandas as pd
 import requests
@@ -27,9 +27,8 @@ SIGNATURES = {b"\xff\xd8\xff": ".jpg", b"\x89PNG": ".png", b"GIF8": ".gif"}
 
 
 def with_key(url, key):
-    parts = urlsplit(url)
-    query = [(name, key if name.lower() == "servicekey" else value) for name, value in parse_qsl(parts.query, keep_blank_values=True)]
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+    """Put the key into the serviceKey value only, leaving the rest of the URL untouched."""
+    return re.sub(r"(?i)(servicekey=)[^&#]*", lambda match: match.group(1) + quote(key, safe=""), url)
 
 
 def image_suffix(content):
