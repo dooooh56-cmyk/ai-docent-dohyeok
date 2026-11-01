@@ -12,7 +12,7 @@ from pathlib import Path
 import pandas as pd
 
 from src.classify import classify, load_raw, load_rules
-from src.collect.collect_emuseum import api_key, append_jsonl, collect_all
+from src.collect.collect_emuseum import api_key, collect_list as collect_records
 from src.collect.emuseum_codes import label_codes
 from src.collect.fetch_emuseum_images import fetch_set
 from src.collect.pipeline import run_pipeline, step
@@ -26,15 +26,18 @@ CLASSIFIED_PATH = Path("data/classified/emuseum_classified.csv")
 
 def collect_list(key, refresh, page_size):
     if refresh:
-        DONE_PATH.unlink(missing_ok=True)
-        LIST_PATH.unlink(missing_ok=True)
+        for stale in (DONE_PATH, LIST_PATH, LIST_PATH.with_suffix(".progress"), LIST_PATH.with_name(LIST_PATH.stem + "_gaps.csv")):
+            stale.unlink(missing_ok=True)
     if DONE_PATH.exists():
         print(f"skip: list already complete ({DONE_PATH.read_text(encoding='utf-8').strip()}); use --refresh to collect again")
         return
-    added = append_jsonl(collect_all(key, LIST_PATH, page_size), LIST_PATH)
+    added, _ = collect_records(key, LIST_PATH, page_size)
     total = sum(1 for line in LIST_PATH.open(encoding="utf-8") if line.strip())
     DONE_PATH.write_text(json.dumps({"finished_at": datetime.now().isoformat(timespec="seconds"), "records": total}) + "\n", encoding="utf-8")
-    print(f"list complete: {total} records ({added} added this run)")
+    gaps = LIST_PATH.with_name(LIST_PATH.stem + "_gaps.csv")
+    skipped = sum(1 for _ in gaps.open(encoding="utf-8")) - 1 if gaps.exists() else 0
+    print(f"list complete: {total} records ({added} added this run; {skipped} offsets skipped, see {gaps.name})" if skipped
+          else f"list complete: {total} records ({added} added this run)")
 
 
 def run(args):

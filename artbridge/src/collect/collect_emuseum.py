@@ -48,6 +48,10 @@ class ApiError(RuntimeError):
     """A list request that failed; the message names the page and the server's reason, never the key."""
 
 
+class FatalApiError(ApiError):
+    """A failure that retrying or smaller pages cannot fix (limits, key problems, capped page size)."""
+
+
 # data.go.kr gateway reasons that retrying will not fix (traffic limit, unregistered or expired key, access denied)
 FATAL_REASONS = ("LIMITED_NUMBER_OF_SERVICE_REQUESTS", "SERVICE_KEY_IS_NOT_REGISTERED", "DEADLINE_HAS_EXPIRED",
                  "SERVICE_ACCESS_DENIED", "UNREGISTERED_IP")
@@ -83,7 +87,8 @@ def saved_ids(path: Path) -> list[str]:
 
 
 def fetch_page(session, key, page, page_size, filters, retries=6):
-    """One list page, retried with growing waits (5, 10, 20 ... up to 300 s) unless the reason is fatal."""
+    """One list page, retried with growing waits (5, 10, 20 ... up to 300 s). Fatal reasons stop at once; a request
+    the gateway calls invalid is tried only twice, since the caller can split it into smaller pages."""
     params = {"serviceKey": key, "numOfRows": page_size, "pageNo": page, **(filters or {})}
     for attempt in range(retries + 1):
         try:
@@ -95,52 +100,95 @@ def fetch_page(session, key, page, page_size, filters, retries=6):
             reason = str(error) if isinstance(error, ValueError) else type(error).__name__
             reason = reason.replace(key, "[redacted]").replace(quote(key, safe=""), "[redacted]")
             if any(fatal in reason for fatal in FATAL_REASONS):
-                raise ApiError(f"page {page}: {reason} (retrying will not help; check the key's daily limit or approval on data.go.kr)") from None
-            if attempt == retries:
-                raise ApiError(f"page {page}: {reason} (failed {retries + 1} times)") from None
+                raise FatalApiError(f"page {page}: {reason} (retrying will not help; check the key's daily limit or approval on data.go.kr)") from None
+            limit = 1 if "INVALID_REQUEST_PARAMETER" in reason else retries
+            if attempt >= limit:
+                raise ApiError(f"page {page} (size {page_size}): {reason} (failed {attempt + 1} times)") from None
             wait = min(5 * 2 ** attempt, 300)
-            print(f"page {page}: {reason}; retry {attempt + 1}/{retries} in {wait}s", flush=True)
+            print(f"page {page} (size {page_size}): {reason}; retry {attempt + 1}/{limit} in {wait}s", flush=True)
             time.sleep(wait)
 
 
-def collect_all(key: str, path: Path, page_size: int = 100, delay: float = 0.2, filters: dict | None = None):
-    """Yield each new page's records. Resumes from the saved record count, so the page size may change between runs;
-    records already saved are dropped by id."""
-    seen_ids = set(ids := saved_ids(path))
-    saved = len(ids)
-    page = saved // page_size + 1
-    if saved:
-        print(f"resuming: {saved} records saved; continuing at page {page} of size {page_size}", flush=True)
+def smaller_size(size):
+    """Next block size when a block keeps failing: the largest of 100, 10, 1 that divides it."""
+    return next(candidate for candidate in (100, 10, 1) if candidate < size and size % candidate == 0)
+
+
+class ListWriter:
+    """Appends records (dropping ids already saved), logs offsets that cannot be fetched even one row at a time,
+    and keeps the next offset in a progress file so reruns resume there."""
+
+    def __init__(self, path: Path):
+        self.path, self.progress, self.gaps = path, path.with_suffix(".progress"), path.with_name(path.stem + "_gaps.csv")
+        ids = saved_ids(path)
+        self.seen = set(ids)
+        self.next_offset = int(self.progress.read_text()) if self.progress.exists() else len(ids)
+        self.added = 0
+
+    def write(self, records, next_offset):
+        new = [record for record in records if record.get("id") not in self.seen]
+        self.seen.update(record.get("id") for record in new)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.path.open("a", encoding="utf-8") as output:
+            output.write("".join(json.dumps(record, ensure_ascii=False) + "\n" for record in new))
+        self.progress.write_text(str(next_offset))
+        self.next_offset = next_offset
+        self.added += len(new)
+
+    def gap(self, offset, reason):
+        new_file = not self.gaps.exists()
+        with self.gaps.open("a", encoding="utf-8") as output:
+            if new_file:
+                output.write("offset,reason,logged_at\n")
+            output.write(f"{offset},\"{reason.replace(chr(34), chr(39))}\",{time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+
+
+def collect_block(session, key, writer, offset, size, filters):
+    """Fetch rows [offset, offset + size). If the block keeps failing, fetch it again in smaller blocks; a single row
+    that still fails is logged as a gap and skipped. Returns totalCount (0 if every attempt failed)."""
+    try:
+        total, items = fetch_page(session, key, offset // size + 1, size, filters)
+    except FatalApiError:
+        raise
+    except ApiError as error:
+        if size == 1:
+            print(f"offset {offset}: skipped after repeated failure; logged in {writer.gaps.name}", flush=True)
+            writer.gap(offset, str(error))
+            writer.write([], offset + 1)
+            return 0
+        sub = smaller_size(size)
+        print(f"offset {offset}: splitting the block of {size} into blocks of {sub}", flush=True)
+        total = 0
+        for start in range(offset, offset + size, sub):
+            if start >= writer.next_offset:
+                total = collect_block(session, key, writer, start, sub, filters) or total
+        return total
+    if items and len(items) < size and offset + len(items) < total:
+        raise FatalApiError(f"offset {offset}: asked for {size} rows, got {len(items)} before the end ({total}); "
+                            "the API probably caps the page size - rerun with a smaller --page-size")
+    # Image URLs are kept exactly as returned: they embed eMuseum's own key, without which the image server
+    # answers HTTP 500. data/raw/ is git-ignored; anything printed or committed goes through safe_url.
+    writer.write([{"_offset": offset, **item} for item in items], min(offset + size, total) if total else offset + size)
+    return total
+
+
+def collect_list(key: str, path: Path, page_size: int = 100, delay: float = 0.2, filters: dict | None = None):
+    """Collect every list record into path; returns (records added this run, totalCount)."""
+    writer = ListWriter(path)
+    offset = writer.next_offset // page_size * page_size
+    if writer.next_offset:
+        print(f"resuming at offset {writer.next_offset} ({len(writer.seen)} records saved), block size {page_size}", flush=True)
     session = requests.Session()
-    while True:
-        total, items = fetch_page(session, key, page, page_size, filters)
-        if items and len(items) < page_size and saved + len(items) < total:
-            raise ApiError(f"page {page}: asked for {page_size} rows, got {len(items)} before the end ({saved}/{total}); "
-                           "the API probably caps the page size - rerun with a smaller --page-size")
-        new = [{"_page": page, "_page_size": page_size, **item} for item in items if item.get("id") not in seen_ids]
-        seen_ids.update(item.get("id") for item in new)
-        # Image URLs are kept exactly as returned: they embed eMuseum's own key, without which the image server
-        # answers HTTP 500. data/raw/ is git-ignored; anything printed or committed goes through safe_url.
-        yield new
-        saved += len(new)
-        print(f"page {page}: {saved}/{total}", flush=True)
-        if saved >= total or page * page_size >= total:
-            return
-        if not items:
-            raise ApiError(f"page {page}: empty page before the end ({saved}/{total}); rerun to retry")
-        page += 1
+    total = None
+    while total is None or offset < total:
+        block_total = collect_block(session, key, writer, offset, page_size, filters)
+        total = block_total or total
+        print(f"offset {offset + page_size}: {len(writer.seen)} saved / {total}", flush=True)
+        if total is None:
+            raise ApiError(f"offset {offset}: no block could be fetched, so the total is unknown; rerun to retry")
+        offset += page_size
         time.sleep(delay)
-
-
-def append_jsonl(pages, path: Path) -> int:
-    """Append one whole page at a time so an interrupted run resumes at a page boundary."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    count = 0
-    for records in pages:
-        with path.open("a", encoding="utf-8") as output:
-            output.write("".join(json.dumps(record, ensure_ascii=False) + "\n" for record in records))
-        count += len(records)
-    return count
+    return writer.added, total
 
 
 if __name__ == "__main__":
@@ -152,7 +200,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     output = Path(args.output)
     try:
-        count = append_jsonl(collect_all(api_key(), output, args.page_size, args.delay, {"name": args.name} if args.name else None), output)
+        added, total = collect_list(api_key(), output, args.page_size, args.delay, {"name": args.name} if args.name else None)
     except ApiError as error:
         raise SystemExit(f"stopped: {error}; rerun the same command to resume") from None
-    print(f"Added {count} records: {output}")
+    print(f"Added {added} records (total {total}): {output}")
