@@ -6,6 +6,7 @@ For eMuseum that is the object page showing KOGL (공공누리) Type 1; any othe
 
 import argparse
 import hashlib
+import re
 import time
 from datetime import date
 from pathlib import Path
@@ -35,7 +36,12 @@ def image_suffix(content):
     for signature, suffix in SIGNATURES.items():
         if content.startswith(signature):
             return suffix
-    raise ValueError("response is not a JPEG, PNG or GIF image")
+    text = content[:2000].decode("utf-8", "replace")
+    code, message = re.search(r"<resultCode>(.*?)</resultCode>", text), re.search(r"<resultMsg>(.*?)</resultMsg>", text)
+    if code or message:
+        raise ValueError(f"not an image; API resultCode {code.group(1) if code else ''} {message.group(1) if message else ''}".strip())
+    snippet = re.sub(r"(?i)servicekey=[^&\"'<\s]*", "serviceKey=[redacted]", " ".join(text.split()))[:150]
+    raise ValueError(f"not an image ({len(content)} bytes): {snippet}")
 
 
 def catalog_rows(row, page, image_path, content, today):
@@ -85,7 +91,12 @@ def fetch_set(classified, set_name, out_dir, key, limit=None, delay=0.3, recheck
                 append_rows(license_path, LICENSE_FIELDS, [license_row])
         except (requests.RequestException, ValueError) as error:
             # never echo request URLs: they carry the API key
-            status, detail = "failed", type(error).__name__ if isinstance(error, requests.RequestException) else str(error)
+            if isinstance(error, requests.RequestException):
+                code = error.response.status_code if error.response is not None else "no response"
+                status, detail = "failed", f"{type(error).__name__} (HTTP {code})"
+            else:
+                status, detail = "failed", str(error)
+            print(f"EMUSEUM_{row['id']}: {detail}", flush=True)
         append_rows(report_path, ["artwork_id", "set_name", "status", "detail", "checked_at"],
                     [{"artwork_id": f"EMUSEUM_{row['id']}", "set_name": set_name, "status": status, "detail": detail, "checked_at": today}])
         counts[status] = counts.get(status, 0) + 1
