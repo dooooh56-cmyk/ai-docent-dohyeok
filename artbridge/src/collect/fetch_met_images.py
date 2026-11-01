@@ -67,12 +67,21 @@ def catalog_rows(record, set_name, image_path, content, today):
     return catalog, license_row
 
 
-def fetch_set(classified, set_name, out_dir, limit=None, delay=0.1):
+def finished_ids(catalog_path, report_path, recheck_skipped=False):
+    """Saved objects and, unless recheck_skipped, objects skipped for rights or missing images."""
+    done = set(pd.read_csv(catalog_path, dtype=str)["artwork_id"]) if catalog_path.exists() else set()
+    if report_path.exists() and not recheck_skipped:
+        report = pd.read_csv(report_path, dtype=str, encoding="utf-8-sig")
+        done |= set(report.loc[report["status"].str.startswith("skipped"), "artwork_id"])
+    return done
+
+
+def fetch_set(classified, set_name, out_dir, limit=None, delay=0.1, recheck_skipped=False):
     out_dir = Path(out_dir)
     images = out_dir / "images"
     images.mkdir(parents=True, exist_ok=True)
     catalog_path, license_path, report_path = out_dir / "metadata.csv", out_dir / "license_log.csv", out_dir / "fetch_report.csv"
-    done = set(pd.read_csv(catalog_path, dtype=str)["artwork_id"]) if catalog_path.exists() else set()
+    done = finished_ids(catalog_path, report_path, recheck_skipped)
     rows = classified[(classified["set_name"] == set_name) & (classified["Is Public Domain"] == "True")]
     ids = [object_id for object_id in rows["Object ID"] if f"MET_{object_id}" not in done][:limit]
     session = requests.Session()

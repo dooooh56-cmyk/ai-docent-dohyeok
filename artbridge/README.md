@@ -25,7 +25,13 @@ uv run streamlit run app.py --server.address 127.0.0.1 --browser.gatherUsageStat
 
 ## 대량 수집 (메타데이터 전체 → 쿼리 분류 → 공개 이미지)
 
-Met은 Open Access 전체 메타데이터 CSV(약 50만 건, 340MB, `data/raw/`에 저장하며 커밋하지 않음)를 받은 뒤 `data/classify_rules.csv`의 쿼리로 분류합니다. 분류 결과는 `data/classified/met_classified.csv`입니다. 이미지는 분류된 작품 중 Met 객체 API가 현재 `isPublicDomain=true`로 표기한 것만 받고, 사용자 일괄 승인 규칙으로 `data/collection/`의 카탈로그·권리 기록에 추가합니다. 중단 후 다시 실행하면 이미 받은 작품은 건너뜁니다.
+아래 명령 하나로 메타데이터 다운로드 → 분류 → 이미지 다운로드를 순서대로 실행합니다(기본 대상: 한국 회화, 해외 회화, 일본 판화). 멈춘 뒤 다시 실행하면 받은 메타데이터와 이미지는 건너뛰고 이어서 진행하며, 실행 기록은 `data/logs/`에 남습니다. Met과 e뮤지엄 명령은 같은 `data/collection/`에 기록하므로 잠금 파일(`data/raw/collection.lock`)로 동시에 하나만 실행됩니다. 정기 실행에서는 `--refresh`로 최신 메타데이터를 다시 받습니다.
+
+```bash
+uv run python -m src.collect.run_met
+```
+
+단계별로 따로 실행할 수도 있습니다. Met은 Open Access 전체 메타데이터 CSV(약 50만 건, 340MB, `data/raw/`에 저장하며 커밋하지 않음)를 받은 뒤 `data/classify_rules.csv`의 쿼리로 분류합니다. 분류 결과는 `data/classified/met_classified.csv`입니다. 이미지는 분류된 작품 중 Met 객체 API가 현재 `isPublicDomain=true`로 표기한 것만 받고, 사용자 일괄 승인 규칙으로 `data/collection/`의 카탈로그·권리 기록에 추가합니다. 중단 후 다시 실행하면 이미 받은 작품은 건너뜁니다.
 
 ```bash
 curl -L -o data/raw/MetObjects.csv https://media.githubusercontent.com/media/metmuseum/openaccess/master/MetObjects.csv
@@ -41,7 +47,7 @@ uv run python -m src.collect.fetch_met_images data/classified/met_classified.csv
 
 ### e뮤지엄 (국립중앙박물관 등, API 키 필요)
 
-아래 명령 하나로 네 단계를 순서대로 실행합니다. 어느 단계에서 멈췄든 같은 명령을 다시 실행하면 끝난 부분은 건너뛰고 이어서 진행하며, 실행 기록은 `data/logs/`에 남습니다. 동시에 두 번 실행되지 않도록 `data/raw/run_emuseum.lock`을 사용합니다. 정기 실행으로 바꿀 때는 같은 명령에 `--refresh`(목록을 처음부터 다시 수집)를 붙여 스케줄러에 등록하면 됩니다.
+아래 명령 하나로 네 단계를 순서대로 실행합니다. 어느 단계에서 멈췄든 같은 명령을 다시 실행하면 끝난 부분은 건너뛰고 이어서 진행하며, 실행 기록은 `data/logs/`에 남습니다. Met 명령과 같은 잠금 파일(`data/raw/collection.lock`)로 동시에 하나만 실행됩니다. 정기 실행으로 바꿀 때는 같은 명령에 `--refresh`(목록을 처음부터 다시 수집)를 붙여 스케줄러에 등록하면 됩니다.
 
 ```bash
 uv run python -m src.collect.run_emuseum

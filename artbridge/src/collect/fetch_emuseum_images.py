@@ -16,7 +16,7 @@ import requests
 
 from src.collect.collect_emuseum import api_key
 from src.collect.emuseum_page import PAGE_URL, fetch_object_page
-from src.collect.fetch_met_images import CATALOG_FIELDS, LICENSE_FIELDS, append_rows
+from src.collect.fetch_met_images import CATALOG_FIELDS, LICENSE_FIELDS, append_rows, finished_ids
 from src.fetch_images import USER_AGENT, download_bytes
 
 KOGL_TYPE1_URL = "https://www.kogl.or.kr/info/licenseType1.do"
@@ -57,15 +57,11 @@ def catalog_rows(row, page, image_path, content, today):
 
 
 def fetch_set(classified, set_name, out_dir, key, limit=None, delay=0.3, recheck_skipped=False):
-    """Saved objects and, unless recheck_skipped, objects skipped for rights or missing images are not fetched again."""
     out_dir = Path(out_dir)
     images = out_dir / "images"
     images.mkdir(parents=True, exist_ok=True)
     catalog_path, license_path, report_path = out_dir / "metadata.csv", out_dir / "license_log.csv", out_dir / "fetch_report.csv"
-    done = set(pd.read_csv(catalog_path, dtype=str)["artwork_id"]) if catalog_path.exists() else set()
-    if report_path.exists() and not recheck_skipped:
-        report = pd.read_csv(report_path, dtype=str, encoding="utf-8-sig")
-        done |= set(report.loc[report["status"].str.startswith("skipped"), "artwork_id"])
+    done = finished_ids(catalog_path, report_path, recheck_skipped)
     rows = classified[(classified["set_name"] == set_name) & ~("EMUSEUM_" + classified["id"]).isin(done)]
     rows = rows.head(limit) if limit else rows
     session = requests.Session()
