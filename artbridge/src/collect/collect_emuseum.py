@@ -70,8 +70,9 @@ def collect_all(key: str, start_page: int = 1, page_size: int = 100, delay: floa
         response = session.get(API_URL, params=params, headers={"Accept": "application/xml"}, timeout=60)
         response.raise_for_status()
         total, items = parse_page(response.text)
-        yield [{"_page": page, **{name: safe_url(value) if "uri" in name.lower() else value for name, value in item.items()}}
-               for item in items]
+        # Image URLs are kept exactly as returned: they embed eMuseum's own key, without which the image server
+        # answers HTTP 500. data/raw/ is git-ignored; anything printed or committed goes through safe_url.
+        yield [{"_page": page, **item} for item in items]
         seen += len(items)
         print(f"page {page}: {seen}/{total}", flush=True)
         if not items or len(items) < page_size or seen >= total:

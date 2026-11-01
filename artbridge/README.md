@@ -53,7 +53,7 @@ uv run python -m src.collect.fetch_met_images data/classified/met_classified.csv
 uv run python -m src.collect.run_emuseum
 ```
 
-단계별로 따로 실행할 수도 있습니다. 목록 API는 국적·분류·재질을 코드로만 주므로, 코드마다 작품 페이지 2개를 읽어 표시된 이름(예: `PS06001018` → `한국 - 조선`)을 붙인 뒤 분류합니다. 이미지는 작품 페이지가 공공누리 제1유형으로 표기한 것만 받습니다. 목록 수집은 중단돼도 다시 실행하면 이어서 받습니다. API 키는 저장 파일과 오류 메시지에 남기지 않습니다.
+단계별로 따로 실행할 수도 있습니다. 목록 API는 국적·분류·재질을 코드로만 주므로, 코드마다 작품 페이지 2개를 읽어 표시된 이름(예: `PS06001018` → `한국 - 조선`)을 붙인 뒤 분류합니다. 이미지는 작품 페이지가 공공누리 제1유형으로 표기한 것만 받습니다. 목록 수집은 중단돼도 다시 실행하면 이어서 받습니다. API 키는 저장 파일과 오류 메시지에 남기지 않습니다. 목록 API가 주는 이미지 주소에는 e뮤지엄 자체 키가 들어 있고 그 주소 그대로만 이미지가 받아지므로, 원래 주소는 git에서 제외된 `data/raw/emuseum_list.jsonl`과 `data/classified/emuseum_classified.csv`에만 두고, 카탈로그에는 키를 가린 주소를 기록합니다. 이미지를 다시 받을 때(`src.fetch_images`)는 로컬 목록에서 원래 주소를 찾아 씁니다.
 
 ```bash
 uv run python -m src.collect.collect_emuseum

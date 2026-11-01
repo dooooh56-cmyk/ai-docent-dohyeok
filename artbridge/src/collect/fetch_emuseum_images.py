@@ -10,12 +10,11 @@ import re
 import time
 from datetime import date
 from pathlib import Path
-from urllib.parse import quote
 
 import pandas as pd
 import requests
 
-from src.collect.collect_emuseum import api_key
+from src.collect.collect_emuseum import safe_url
 from src.collect.emuseum_page import PAGE_URL, fetch_object_page
 from src.collect.fetch_met_images import CATALOG_FIELDS, LICENSE_FIELDS, append_rows, finished_ids
 from src.fetch_images import USER_AGENT, download_bytes
@@ -24,11 +23,6 @@ KOGL_TYPE1_URL = "https://www.kogl.or.kr/info/licenseType1.do"
 APPROVAL_RULE = "user bulk rule 2026-10-31: institution open-license mark (eMuseum page KOGL Type 1)"
 REGIONS = {"한국": "Korea", "중국": "China", "일본": "Japan"}
 SIGNATURES = {b"\xff\xd8\xff": ".jpg", b"\x89PNG": ".png", b"GIF8": ".gif"}
-
-
-def with_key(url, key):
-    """Put the key into the serviceKey value only, leaving the rest of the URL untouched."""
-    return re.sub(r"(?i)(servicekey=)[^&#]*", lambda match: match.group(1) + quote(key, safe=""), url)
 
 
 def image_suffix(content):
@@ -46,7 +40,7 @@ def image_suffix(content):
 def catalog_rows(row, page, image_path, content, today):
     artwork_id = f"EMUSEUM_{row['id']}"
     nationality = page["page_nationality_period"] or row.get("nationality_label", "")
-    shared = {"artwork_id": artwork_id, "image_source_url": row["imgUri"], "image_sha256": hashlib.sha256(content).hexdigest(),
+    shared = {"artwork_id": artwork_id, "image_source_url": safe_url(row["imgUri"]), "image_sha256": hashlib.sha256(content).hexdigest(),
               "image_license": "공공누리 제1유형 (출처표시)", "license_url": KOGL_TYPE1_URL, "rights_checked_at": today,
               "image_credit": f"{row.get('museumName2', '')} (e뮤지엄), 공공누리 제1유형".lstrip(" "),
               "rights_status": "approved_local"}
@@ -61,7 +55,7 @@ def catalog_rows(row, page, image_path, content, today):
     return catalog, license_row
 
 
-def fetch_set(classified, set_name, out_dir, key, limit=None, delay=0.3, recheck_skipped=False):
+def fetch_set(classified, set_name, out_dir, limit=None, delay=0.3, recheck_skipped=False):
     out_dir = Path(out_dir)
     images = out_dir / "images"
     images.mkdir(parents=True, exist_ok=True)
@@ -82,7 +76,9 @@ def fetch_set(classified, set_name, out_dir, key, limit=None, delay=0.3, recheck
             elif not row.get("imgUri"):
                 status = "skipped_no_image"
             else:
-                content = download_bytes(with_key(row["imgUri"], key), session)
+                if "%5Bredacted%5D" in row["imgUri"]:
+                    raise ValueError("list was collected before 2026-11-01 with image URLs redacted; rerun: uv run python -m src.collect.run_emuseum --refresh")
+                content = download_bytes(row["imgUri"], session)
                 image_path = images / f"EMUSEUM_{row['id']}{image_suffix(content)}"
                 image_path.write_bytes(content)
                 catalog, license_row = catalog_rows(row, page, image_path, content, today)
@@ -112,6 +108,5 @@ if __name__ == "__main__":
     parser.add_argument("--delay", type=float, default=0.3)
     args = parser.parse_args()
     classified = pd.read_csv(args.classified_csv, dtype=str, encoding="utf-8-sig").fillna("")
-    key = api_key()
     for set_name in args.sets:
-        print(set_name, fetch_set(classified, set_name, args.out_dir, key, args.limit, args.delay))
+        print(set_name, fetch_set(classified, set_name, args.out_dir, args.limit, args.delay))

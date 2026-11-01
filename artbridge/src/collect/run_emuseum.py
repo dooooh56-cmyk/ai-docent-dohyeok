@@ -52,7 +52,7 @@ def run(args):
     print(result.groupby("set_name").size().to_string())
     step("4/4 images")
     for set_name in args.sets:
-        print(set_name, fetch_set(result.fillna(""), set_name, args.out_dir, key, args.limit, args.delay, args.recheck_skipped), flush=True)
+        print(set_name, fetch_set(result.fillna(""), set_name, args.out_dir, args.limit, args.delay, args.recheck_skipped), flush=True)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@
 
 import argparse
 import hashlib
+import json
 import time
 from pathlib import Path
 
@@ -24,13 +25,23 @@ def download_bytes(url, session, timeout=30):
     return bytes(content)
 
 
-def source_url(url):
-    """eMuseum URLs are recorded with the API key redacted; put the local key back only for the request."""
+EMUSEUM_LIST = Path("data/raw/emuseum_list.jsonl")
+
+
+def source_url(row, _cache={}):
+    """eMuseum image URLs are committed with their embedded key redacted; the usable URL is in the local raw list."""
+    url = row["image_source_url"]
     if "serviceKey=%5Bredacted%5D" not in url:
         return url
-    from src.collect.collect_emuseum import api_key
-    from src.collect.fetch_emuseum_images import with_key
-    return with_key(url, api_key())
+    if not _cache:
+        if not EMUSEUM_LIST.is_file():
+            raise ValueError(f"{EMUSEUM_LIST} not found; run: uv run python -m src.collect.run_emuseum")
+        with EMUSEUM_LIST.open(encoding="utf-8") as source:
+            _cache.update((record["id"], record.get("imgUri", "")) for record in map(json.loads, source))
+    original = _cache.get(row["artwork_id"].removeprefix("EMUSEUM_"), "")
+    if not original or "%5Bredacted%5D" in original:
+        raise ValueError("no usable image URL in the local eMuseum list; rerun: uv run python -m src.collect.run_emuseum --refresh")
+    return original
 
 
 def fetch_catalog_images(rows, purpose="local_research", delay=0.5, session=None):
@@ -43,7 +54,7 @@ def fetch_catalog_images(rows, purpose="local_research", delay=0.5, session=None
             report.append({"artwork_id": row["artwork_id"], "status": "present"})
             continue
         try:
-            content = download_bytes(source_url(row["image_source_url"]), session)
+            content = download_bytes(source_url(row), session)
         except (requests.RequestException, ValueError) as error:
             report.append({"artwork_id": row["artwork_id"], "status": "failed", "error": type(error).__name__ if "%5Bredacted%5D" in row["image_source_url"] else str(error)})
             continue

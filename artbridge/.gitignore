@@ -11,3 +11,4 @@ embeddings/
 data/raw/
 data/collection/images/
 data/logs/
+data/classified/emuseum_classified.csv

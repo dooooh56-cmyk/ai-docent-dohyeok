@@ -1,17 +1,21 @@
 """Diagnose eMuseum image downloads without printing the API key.
 
 Fetches a few list records and tries each image URL two ways: exactly as the API returned it, and with the
-serviceKey replaced by the local key (what fetch_emuseum_images does today).
+serviceKey replaced by the local key. (2026-11-01 result: only the URL as returned works; the embedded key differs.)
 """
 
 import argparse
-from urllib.parse import parse_qsl, urlsplit
+import re
+from urllib.parse import parse_qsl, quote, urlsplit
 
 import requests
 
 from src.collect.collect_emuseum import API_URL, api_key, parse_page
-from src.collect.fetch_emuseum_images import with_key
 from src.fetch_images import USER_AGENT
+
+
+def with_key(url, key):
+    return re.sub(r"(?i)(servicekey=)[^&#]*", lambda match: match.group(1) + quote(key, safe=""), url)
 
 
 def describe(response):
