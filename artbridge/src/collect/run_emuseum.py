@@ -12,7 +12,7 @@ from pathlib import Path
 import pandas as pd
 
 from src.classify import classify, load_raw, load_rules
-from src.collect.collect_emuseum import api_key, append_jsonl, collect_all, last_page
+from src.collect.collect_emuseum import api_key, append_jsonl, collect_all
 from src.collect.emuseum_codes import label_codes
 from src.collect.fetch_emuseum_images import fetch_set
 from src.collect.pipeline import run_pipeline, step
@@ -24,15 +24,14 @@ CODES_PATH = RAW / "emuseum_codes.csv"
 CLASSIFIED_PATH = Path("data/classified/emuseum_classified.csv")
 
 
-def collect_list(key, refresh):
+def collect_list(key, refresh, page_size):
     if refresh:
         DONE_PATH.unlink(missing_ok=True)
         LIST_PATH.unlink(missing_ok=True)
     if DONE_PATH.exists():
         print(f"skip: list already complete ({DONE_PATH.read_text(encoding='utf-8').strip()}); use --refresh to collect again")
         return
-    start = last_page(LIST_PATH) + 1
-    added = append_jsonl(collect_all(key, start), LIST_PATH)
+    added = append_jsonl(collect_all(key, LIST_PATH, page_size), LIST_PATH)
     total = sum(1 for line in LIST_PATH.open(encoding="utf-8") if line.strip())
     DONE_PATH.write_text(json.dumps({"finished_at": datetime.now().isoformat(timespec="seconds"), "records": total}) + "\n", encoding="utf-8")
     print(f"list complete: {total} records ({added} added this run)")
@@ -41,7 +40,7 @@ def collect_list(key, refresh):
 def run(args):
     key = api_key()
     step("1/4 list")
-    collect_list(key, args.refresh)
+    collect_list(key, args.refresh, args.page_size)
     step("2/4 code labels")
     raw = pd.read_json(LIST_PATH, lines=True, dtype=str).fillna("")
     print(label_codes(raw, CODES_PATH))
@@ -62,6 +61,8 @@ if __name__ == "__main__":
     parser.add_argument("--rules", default="data/classify_rules.csv")
     parser.add_argument("--limit", type=int, help="max new images per set (for trial runs)")
     parser.add_argument("--delay", type=float, default=0.3)
+    parser.add_argument("--page-size", type=int, default=100,
+                        help="list rows per request; larger means fewer requests. Stops with a message if the API caps it")
     parser.add_argument("--refresh", action="store_true", help="collect the list again from page 1 (for periodic updates)")
     parser.add_argument("--recheck-skipped", action="store_true", help="re-read object pages previously skipped for rights")
     run_pipeline("emuseum", run, parser.parse_args())

@@ -54,6 +54,8 @@ def run_pipeline(name, run, args):
             # never print request URLs: some carry an API key
             status = error.response.status_code if error.response is not None else "network error"
             print(f"\nstopped: request failed ({status}, {type(error).__name__}); rerun the same command to resume")
+        except RuntimeError as error:
+            print(f"\nstopped: {error}; rerun the same command to resume")
         except Exception:
             print("\nstopped with an error; rerun the same command to resume after fixing it")
             traceback.print_exc(file=sys.stdout)
