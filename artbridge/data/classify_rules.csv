@@ -1,0 +1,9 @@
+set_name,source,query,description
+korea_painting,met,"Culture.str.contains('Korea') and Classification.str.contains('Painting')",Met 기관 표기상 한국 문화권 회화
+foreign_painting,met,"Classification.str.contains('Painting') and not Culture.str.contains('Korea')",한국 외 회화 (모든 부서)
+japan_print,met,"Culture.str.contains('Japan') and Classification.str.contains('Prints')",일본 판화 (우키요에 포함)
+buddhist_sculpture,met,"Classification.str.contains('Sculpture') and (Title.str.contains('Buddha|Bodhisattva|Buddhist', case=False) or `Object Name`.str.contains('Buddha|Bodhisattva|Buddhist', case=False) or Tags.str.contains('Buddha|Bodhisattva|Buddhist', case=False))",기존 ArtBridge 대상인 불교 조각
+joseon_painting,emuseum,"nationality_label == '한국 - 조선' and purpose_label.str.contains('서화 - 회화')",e뮤지엄 국적/시대가 한국 - 조선인 회화
+korea_painting,emuseum,"nationality_label.str.startswith('한국') and purpose_label.str.contains('서화 - 회화')",e뮤지엄 국적이 한국인 회화 (조선 포함 전 시대)
+foreign_painting,emuseum,"nationality_label != '' and not nationality_label.str.startswith('한국') and purpose_label.str.contains('서화 - 회화')",e뮤지엄 소장 외국 회화
+buddhist_sculpture,emuseum,"purpose_label.str.contains('불교 - 예배 - 불상')",기존 ArtBridge 대상인 불상

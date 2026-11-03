@@ -51,14 +51,18 @@ def validate_catalog(rows):
     return errors
 
 
-def usable_image_rows(rows, purpose):
+def approved_rows(rows, purpose):
     if purpose != "local_research":
         raise ValueError(f"Unsupported purpose: {purpose}")
-    required = ("artwork_id", "image_path", "object_page_url", "image_license", "license_url", "rights_checked_at", "image_credit", "image_sha256")
+    required = ("artwork_id", "image_path", "image_source_url", "object_page_url", "image_license", "license_url", "rights_checked_at", "image_credit", "image_sha256")
+    return [row for row in rows
+            if row.get("rights_status") == "approved_local" and row.get("rights_approved_by")
+            and row.get("rights_purpose") == purpose and all(row.get(key) for key in required)]
+
+
+def usable_image_rows(rows, purpose):
     usable = []
-    for row in rows:
-        if row.get("rights_status") != "approved_local" or not row.get("rights_approved_by") or row.get("rights_purpose") != purpose or not all(row.get(key) for key in required):
-            continue
+    for row in approved_rows(rows, purpose):
         path = Path(row["image_path"])
         if path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == row["image_sha256"]:
             usable.append(row)

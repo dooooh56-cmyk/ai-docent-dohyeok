@@ -4,6 +4,8 @@
 
 개인 프로젝트 실행 계획서 및 모듈 명세서  |  2026년 10월 27일
 
+> **2026-10-31 방향 변경 (사용자 결정)**: ArtBridge는 AI 도슨트(`../docent/`)의 추가 기능으로 관리하며, 수집 대상을 조선 회화와 비교용 해외 회화(일본 판화 포함)로 넓힌다. 수집은 기관 전체 메타데이터 → `data/classify_rules.csv` 쿼리 분류 → 분류된 작품 중 기관이 공개 라이선스로 표기한 이미지만 다운로드 순서로 진행한다. 기관의 작품별 공개 라이선스 표기(Met `isPublicDomain=true`, Smithsonian CC0, 공공누리 제1유형)는 사용자가 일괄 승인했으며 `license_log.csv`의 `rights_approved_by`에 규칙으로 기록한다. 기존 불교 조각 45점 카탈로그와 아래 계획은 유지하되, 회화 기준의 목표·평가는 별도로 갱신이 필요하다.
+
 한국 불교 조각 한 점을 입력하면 중국·일본·인도/간다라의 작품 가운데 시각적·메타데이터상 가까운 사례를 찾아 비교할 수 있게 한다. 첫 6주는 권리 확인이 끝난 소규모 데이터와 재현 가능한 이미지 검색을 완성하는 데 집중한다. AI 도슨트 프로젝트의 작품 식별·출처·이미지 권리 관리 경험은 기술 배경으로 참고하지만, ArtBridge는 별도 저장소와 일정으로 운영하는 개인 프로젝트다.
 
 | 계획 요약 | 결정 |
@@ -119,6 +121,7 @@ artbridge/
 ├── embeddings/                       # 모델별 벡터와 artwork_id 순서표
 ├── src/
 │   ├── catalog.py                    # 카탈로그 검증과 권리 게이트
+│   ├── fetch_images.py               # 승인 이미지 재다운로드·해시 확인
 │   ├── embed.py                      # 이미지 임베딩 생성·저장
 │   ├── search.py                     # 해외 작품 Top-k 검색
 │   ├── compare_metadata.py           # 메타데이터 병렬 비교
@@ -154,7 +157,9 @@ artbridge/
 | --- | --- | --- |
 | 카탈로그·권리 검증 | `src/catalog.py` — `load_catalog(path)` | `metadata.csv`와 같은 디렉터리의 `license_log.csv`를 읽어 작품별 권리 기록을 연결한다. 파일 누락·필수 열 누락을 명확한 오류로 알린다. |
 | 카탈로그·권리 검증 | `src/catalog.py` — `validate_catalog(rows)` | 필수 `artwork_id`, `region`, 작품 페이지 URL, 이미지 경로를 검사하고 중복 ID·잘못된 권역·존재하지 않는 이미지 경로를 보고한다. 누락된 학술 정보는 임의로 채우지 않고 결측으로 둔다. |
-| 카탈로그·권리 검증 | `src/catalog.py` — `usable_image_rows(rows, purpose)` | `rights_status` 및 라이선스 조건을 확인해 해당 용도로 사용할 수 있는 이미지 레코드만 반환한다. 불명확·금지·허가 미확인 이미지는 임베딩 대상에서 제외한다. |
+| 카탈로그·권리 검증 | `src/catalog.py` — `approved_rows(rows, purpose)` | `rights_status`, 승인자, 용도, 필수 권리 필드를 확인해 해당 용도로 승인된 레코드만 반환한다. 파일 존재 여부는 보지 않는다. |
+| 카탈로그·권리 검증 | `src/catalog.py` — `usable_image_rows(rows, purpose)` | `approved_rows` 결과 중 로컬 이미지 파일이 있고 기록된 `image_sha256`과 일치하는 레코드만 반환한다. 불명확·금지·허가 미확인 이미지는 임베딩 대상에서 제외한다. |
+| 이미지 복원 | `src/fetch_images.py` — `fetch_catalog_images(rows, purpose)` | 승인된 레코드만 `image_source_url`에서 다시 받는다. 내려받은 파일의 해시가 기록과 다르면 저장하지 않고 `hash_mismatch`로 보고하며, 실패 건을 숨기지 않는다. |
 | 이미지 임베딩 | `src/embed.py` — `load_image(path)` | 이미지 파일을 열고 손상 파일·지원하지 않는 형식을 오류로 분리한다. 색상 모드 변환과 모델 입력 전처리는 선택된 모델의 공식 processor에 맡긴다. |
 | 이미지 임베딩 | `src/embed.py` — `embed_image(image, model, processor)` | 단일 이미지에서 모델 임베딩 벡터를 계산한다. 입력은 이미지와 고정된 모델/processor, 출력은 1차원 벡터다. |
 | 이미지 임베딩 | `src/embed.py` — `embed_catalog(rows, model_id)` | 권리 사용이 허용된 카탈로그 이미지 전체를 같은 설정으로 벡터화하고, 각 벡터의 행이 어떤 `artwork_id`인지 함께 보존한다. 처리 실패 레코드는 이유와 함께 남긴다. |

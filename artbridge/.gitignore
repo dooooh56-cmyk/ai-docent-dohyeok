@@ -8,3 +8,7 @@ __pycache__/
 *.py[cod]
 data/images/
 embeddings/
+data/raw/
+data/collection/images/
+data/logs/
+data/classified/emuseum_classified.csv
